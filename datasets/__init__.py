@@ -13,3 +13,4 @@
 # limitations under the License.
 from datasets.argoverse_v2_dataset import ArgoverseV2Dataset
 from datasets.argoverse_v2_visualize_wrapper_3d import ArgoverseV2VisualizeWrapper3D
+from datasets.itri_visualize_wrapper_3d import ITRIVisualizeWrapper3D
