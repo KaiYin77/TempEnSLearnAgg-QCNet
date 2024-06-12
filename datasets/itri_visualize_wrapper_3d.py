@@ -233,7 +233,7 @@ class ITRIVisualizeWrapper3D:
         ax.set_yticks([])
         ax.set_yticklabels([])
 
-        title = 'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo'
+        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @t={time} (10hz)'
         ax.set_title(title, fontsize=7, color="black")
         
         av_index = processed_data['agent']['av_index']
