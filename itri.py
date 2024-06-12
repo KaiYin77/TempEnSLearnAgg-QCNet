@@ -15,6 +15,18 @@ from transforms import TargetBuilder
 
 from av2.datasets.motion_forecasting.eval.metrics import compute_ade, compute_fde
 
+file_id = 8
+tracking_file_dict = {
+    6: "./raw_data/2020-09-11-17-31-33_6/tracking/2020-09-11-17-31-33_6_ImmResult.json",
+    7: "./raw_data/2020-09-11-17-31-33_7/tracking/2020-09-11-17-31-33_7_ImmResult.json",
+    8: "./raw_data/2020-09-11-17-31-33_8/tracking/2020-09-11-17-31-33_8_ImmResult.json",
+}
+scene_len_dict = {
+    6: 200,
+    7: 190,
+    8: 198,
+}
+
 def postprocess(data, traj_refine, pi, time_shift=50):
     origin = data['agent']['position'][:, 50+time_shift - 1]
     theta = data['agent']['heading'][:, 50+time_shift - 1]
@@ -89,7 +101,7 @@ def quaternion_to_yaw(quaternion):
     yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
     return yaw
 
-def get_agent_features():
+def get_agent_features(tracking_file):
     _agent_types = {
         'car': 0,
         'pedestrian': 1,
@@ -97,7 +109,7 @@ def get_agent_features():
         'truck': 4,
         'bus': 4,
     }
-    with open('./raw_data/2020-09-11-17-31-33_6/tracking/2020-09-11-17-31-33_6_ImmResult.json', 'r') as f:
+    with open(tracking_file, 'r') as f:
         json_data = json.load(f)
     
     num_steps = len(json_data['frames'])  # Assuming 'frames' contains the trajectory data
@@ -336,11 +348,11 @@ def get_map_features():
     map_data['map_polygon', 'to', 'map_polygon']['type'] = polygon_to_polygon_type
     return map_data
 
-def preprocess_data():
+def preprocess_data(tracking_file):
     data = dict()
     data['scenario_id'] = '0001'
     data['city'] = 'Hsinchu'
-    data['agent'] = get_agent_features()
+    data['agent'] = get_agent_features(tracking_file)
     data.update(get_map_features()) 
     return data
 
@@ -358,20 +370,23 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path', type=str, required=True)
     args = parser.parse_args()
     
-    scene_len = 200
-    processed_data = preprocess_data()
+    scene_len = scene_len_dict[file_id] 
+    tracking_file = tracking_file_dict[file_id]
+    processed_data = preprocess_data(tracking_file)
     viz_wrapper = ITRIVisualizeWrapper3D()
     model = {
         'TempEnsLearnAgg': TempEnsLearnAgg,
     }[args.model].load_from_checkpoint(checkpoint_path=args.ckpt_path, map_location='cpu')
     data = HeteroData(processed_data) 
-    sf_tela_trajs_eval = np.load('sf_tela_trajs_eval.npy')
-    viz_wrapper.forward({
-        'scene_len': scene_len,
-        'processed_data': data,
-        'sf_tela_trajs': sf_tela_trajs_eval,
-    })
-    exit()
+    #sf_tela_trajs_eval = np.load(f'sf_tela_trajs_eval_{file_id}.npy')
+    #viz_wrapper.forward({
+    #    'file_id': file_id,
+    #    'tracking_file': tracking_file,
+    #    'scene_len': scene_len,
+    #    'processed_data': data,
+    #    'sf_tela_trajs': sf_tela_trajs_eval,
+    #})
+    #exit()
 
     # accelerate by gpu
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -404,9 +419,11 @@ if __name__ == '__main__':
 
     sf_tela_trajs_eval = torch.stack(sf_tela_trajs_eval, dim=0)
     sf_tela_trajs_eval = sf_tela_trajs_eval.numpy()
-    np.save('sf_tela_trajs_eval.npy', sf_tela_trajs_eval)
+    np.save(f'sf_tela_trajs_eval_{file_id}.npy', sf_tela_trajs_eval)
 
     viz_wrapper.forward({
+        'file_id': file_id,
+        'tracking_file': tracking_file,
         'scene_len': scene_len,
         'processed_data': data,
         'sf_tela_trajs': sf_tela_trajs_eval,

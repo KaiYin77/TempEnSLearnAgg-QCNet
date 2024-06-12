@@ -81,9 +81,9 @@ setattr(Axes3D, 'arrow3D', _arrow3D)
 class ITRIVisualizeWrapper3D:
     def __init__(self):
         self.map_api = ArgoverseStaticMap
-        pcd_dir = './raw_data/2020-09-11-17-31-33_6/lidar'
-        self.pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd')])
-        self.point_clouds = [o3d.io.read_point_cloud(os.path.join(pcd_dir, f)) for f in self.pcd_files]
+        #pcd_dir = './raw_data/2020-09-11-17-31-33_6/lidar'
+        #self.pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd')])
+        #self.point_clouds = [o3d.io.read_point_cloud(os.path.join(pcd_dir, f)) for f in self.pcd_files]
     
     def is_within_limits(self, av_center, radius, points):
         av_center = av_center.numpy()
@@ -200,7 +200,6 @@ class ITRIVisualizeWrapper3D:
         crosswalk_polygons = np.array(crosswalk_polygons)
         
         #centerline_lengths = self.compute_centerline_lengths(lane_centerlines)
-        #print(min(centerline_lengths), max(centerline_lengths))
         map_data = {
             'lane_centerlines': lane_centerlines,
             'lane_polygons': lane_polygons,
@@ -260,7 +259,8 @@ class ITRIVisualizeWrapper3D:
         ax.set_yticks([])
         ax.set_yticklabels([])
 
-        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @+t={time-60} ms (10hz)'
+        title = f'Hsinchu Guang Fu Road Seg6\n' 
+        title += f'Online Motion Prediction with Online Tracking @+t={time-60} ms (10hz)'
         ax.set_title(title, fontsize=7, color="black")
         
         canva_center = [av_center[0], av_center[1]]
@@ -281,22 +281,22 @@ class ITRIVisualizeWrapper3D:
         yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         return yaw
 
-    def preprocess_pc(self, time, position, rotation):
-        if time >= 200:
-            time = 200
-        point_cloud = self.point_clouds[time-1]
-        points = np.asarray(point_cloud.points)
-        rotation_matrix = quat2mat(rotation)
-        rotated_points = np.dot(points, rotation_matrix.T)
-        points = rotated_points + np.array(position)
-        points[:, 2] = points[:, 2] - position[2]
-        return points 
+    #def preprocess_pc(self, time, position, rotation):
+    #    if time >= 200:
+    #        time = 200
+    #    point_cloud = self.point_clouds[time-1]
+    #    points = np.asarray(point_cloud.points)
+    #    rotation_matrix = quat2mat(rotation)
+    #    rotated_points = np.dot(points, rotation_matrix.T)
+    #    points = rotated_points + np.array(position)
+    #    points[:, 2] = points[:, 2] - position[2]
+    #    return points 
 
-    def matplot_pc(self, ax, pc):
-        ax.scatter(pc[:, 0], pc[:, 1], 0, s=0.005, color='gray', alpha=0.5, marker=',')
+    #def matplot_pc(self, ax, pc):
+    #    ax.scatter(pc[:, 0], pc[:, 1], 0, s=0.005, color='gray', alpha=0.5, marker=',')
 
-    def preprocess_agent(self, time):
-        with open('./raw_data/2020-09-11-17-31-33_6/tracking/2020-09-11-17-31-33_6_ImmResult.json', 'r') as f:
+    def preprocess_agent(self, tracking_file, time):
+        with open(tracking_file, 'r') as f:
             json_data = json.load(f)
 
         agent_tracks = []
@@ -446,7 +446,7 @@ class ITRIVisualizeWrapper3D:
             past_valid = valid_mask[idx]
             num_valid_per_agent = np.sum(past_valid)
             if num_valid_per_agent < 45: continue
-            pred_traj = pred_traj.reshape(6, 50, 2)
+            pred_traj = pred_traj.reshape(6, 50, 2)[:, :30, :]
             for i in range(pred_traj.shape[0]):
                 #color = 'royalblue'#'orange'
                 color = "#3C736D"
@@ -498,7 +498,6 @@ class ITRIVisualizeWrapper3D:
         frames = []
         for img in cache_images:
             frames.append(imageio.imread(img))
-        #imageio.mimsave(f'./visualize_results/{uuid}.gif', frames, format='GIF', fps=5, loop=1)
         imageio.mimsave(f'./visualize_results/{uuid}.mkv', frames, format='FFMPEG', fps=10, codec='libx264')
 
     def clear_cache(self):
@@ -516,6 +515,8 @@ class ITRIVisualizeWrapper3D:
         map_radius = 100
         processed_data = viz_dict['processed_data']
         sf_tela_trajs = viz_dict['sf_tela_trajs']
+        tracking_file = file_dict['tracking_file']
+        file_id = file_dict['file_id']
         
         map_data = self.preprocess_map()
         # 2. preprocess visuzlize ingridient
@@ -542,5 +543,5 @@ class ITRIVisualizeWrapper3D:
             plt.savefig(f'./visualize_results/gif_cache/{time}.png', dpi=800)
             plt.clf()
             plt.close(fig)
-        self.generate_animate(uuid='itri')
+        self.generate_animate(uuid=f'itri-seg{file_id}')
         self.clear_cache()
