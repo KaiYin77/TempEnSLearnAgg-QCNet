@@ -515,8 +515,8 @@ class ITRIVisualizeWrapper3D:
         map_radius = 100
         processed_data = viz_dict['processed_data']
         sf_tela_trajs = viz_dict['sf_tela_trajs']
-        tracking_file = file_dict['tracking_file']
-        file_id = file_dict['file_id']
+        tracking_file = viz_dict['tracking_file']
+        file_id = viz_dict['file_id']
         
         map_data = self.preprocess_map()
         # 2. preprocess visuzlize ingridient
@@ -526,7 +526,7 @@ class ITRIVisualizeWrapper3D:
             av_center = processed_data['agent']['position'][av_index, time]
             fig, ax = self.create_fig_and_ax(
                     size_pixels=2000, av_center=av_center, radius=plot_radius, time=time)
-            agent_data = self.preprocess_agent(time)
+            agent_data = self.preprocess_agent(tracking_file, time)
             #av_data = next(d for d in agent_data if d['is_av'])
             #pc_data = self.preprocess_pc(time, av_data['position'], av_data['rotation'])
 
