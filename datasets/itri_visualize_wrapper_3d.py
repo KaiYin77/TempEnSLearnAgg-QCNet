@@ -1,4 +1,5 @@
 import os
+from tqdm import tqdm
 from pathlib import Path
 
 import torch
@@ -9,6 +10,8 @@ import json
 from scipy.spatial.distance import cdist
 from scipy.interpolate import interp1d
 
+import open3d as o3d
+from transforms3d.quaternions import quat2mat
 import matplotlib
 from matplotlib import colors, cm
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
@@ -86,6 +89,9 @@ setattr(Axes3D, 'arrow3D', _arrow3D)
 class ITRIVisualizeWrapper3D:
     def __init__(self):
         self.map_api = ArgoverseStaticMap
+        pcd_dir = './raw_data/2020-09-11-17-31-33_6/lidar'
+        self.pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd')])
+        self.point_clouds = [o3d.io.read_point_cloud(os.path.join(pcd_dir, f)) for f in self.pcd_files]
 
     def get_map_features(self, map_api, centerlines):
         lane_segment_ids = map_api.get_scenario_lane_segment_ids()
@@ -195,7 +201,7 @@ class ITRIVisualizeWrapper3D:
                 color='#0A1931',
                 linewidth=0.3,
                 alpha=1,
-                label='map',
+                label='Map',
             )
         lane_polygons = map_data['lane_polygons']
         for i, l_p in enumerate(lane_polygons):
@@ -233,7 +239,7 @@ class ITRIVisualizeWrapper3D:
         ax.set_yticks([])
         ax.set_yticklabels([])
 
-        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @t={time} (10hz)'
+        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @+t={time-60} (10hz)'
         ax.set_title(title, fontsize=7, color="black")
         
         av_index = processed_data['agent']['av_index']
@@ -256,6 +262,20 @@ class ITRIVisualizeWrapper3D:
         yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
         return yaw
 
+    def preprocess_pc(self, time, position, rotation):
+        if time >= 200:
+            time = 200
+        point_cloud = self.point_clouds[time-1]
+        points = np.asarray(point_cloud.points)
+        rotation_matrix = quat2mat(rotation)
+        rotated_points = np.dot(points, rotation_matrix.T)
+        points = rotated_points + np.array(position)
+        points[:, 2] = points[:, 2] - position[2]
+        return points 
+
+    def matplot_pc(self, ax, pc):
+        ax.scatter(pc[:, 0], pc[:, 1], 0, s=0.005, color='gray', alpha=0.5, marker=',')
+
     def preprocess_agent(self, time):
         with open('./raw_data/2020-09-11-17-31-33_6/tracking/2020-09-11-17-31-33_6_ImmResult.json', 'r') as f:
             json_data = json.load(f)
@@ -267,6 +287,15 @@ class ITRIVisualizeWrapper3D:
                 rotation = frame_data['pose']['rotation']
                 heading = self.quaternion_to_yaw(rotation)
                 actor_state = torch.tensor([frame_data['pose']['position']['x'], frame_data['pose']['position']['y'], heading])
+                position = np.array([
+                    frame_data['pose']['position']['x'],
+                    frame_data['pose']['position']['y'],
+                    frame_data['pose']['position']['z']])
+                rotation = np.array([
+                    frame_data['pose']['rotation']['w'],
+                    frame_data['pose']['rotation']['x'],
+                    frame_data['pose']['rotation']['y'],
+                    frame_data['pose']['rotation']['z']])
                 state = {
                     "l": _SIZE['car'][0],
                     "w": _SIZE['car'][1],
@@ -274,6 +303,8 @@ class ITRIVisualizeWrapper3D:
                     "actor_state": actor_state,
                     "object_type": 'car',
                     "is_av": True,
+                    "position": position,
+                    "rotation": rotation,
                 }
                 agent_tracks.append(state)
                 for obj_idx, obj_data in enumerate(frame_data['objects']):
@@ -287,6 +318,8 @@ class ITRIVisualizeWrapper3D:
                         "actor_state": actor_state,
                         "object_type": obj_data['tracking_name'],
                         "is_av": False,
+                        "position": None,
+                        "rotation": None,
                     }
                     agent_tracks.append(state)
                 break
@@ -429,66 +462,45 @@ class ITRIVisualizeWrapper3D:
                 label='K-sweep=10 trajs'
             )
 
-    def plot_tela_prediction(self, ax, pred_traj):
-        pred_traj = pred_traj.reshape(6, 50, 2)
-
-        for i in range(pred_traj.shape[0]):
-            color = 'royalblue'#'orange'
-            ax.plot(
-                pred_traj[i, :, 0], pred_traj[i, :, 1], zs=0, zdir='z', 
-                color=color,
-                linestyle='dashed',
-                linewidth=0.5,
-                alpha=1,
-                zorder=1000
-            )
-            dx = pred_traj[i, -1, 0] - pred_traj[i, -2, 0]
-            dy = pred_traj[i, -1, 1] - pred_traj[i, -2, 1]
-            ax.arrow3D(
-                pred_traj[i, -1, 0], pred_traj[i, -1, 1], 0,
-                dx, dy, 0,
-                mutation_scale=5,
-                linewidth=0.65,
-                fc=color,
-                ec=color,
-                label='TempEns-LearnAgg trajs',
-                zorder=1000
-            )
-
-    def plot_gt(self, ax, gt_traj):
-        gt_traj = gt_traj.reshape(50, 2)
-        color = 'red'
-        ax.plot(
-            gt_traj[:, 0], gt_traj[:, 1], zs=0, zdir='z',
-            color=color,
-            linestyle='dashed',
-            linewidth=0.5,
-            alpha=1,
-            zorder=1000,
-        )
-        dx = gt_traj[-1, 0] - gt_traj[-2, 0]
-        dy = gt_traj[-1, 1] - gt_traj[-2, 1]
-        ax.arrow3D(
-            gt_traj[-1, 0], gt_traj[-1, 1], 0,
-            dx, dy, 0,
-            mutation_scale=5,
-            linewidth=0.5,
-            arrowstyle="-|>",
-            fc='red',
-            ec='red',
-            label='GT traj',
-            zorder=1000
-        )
+    def plot_tela_prediction(self, ax, time, processed_data, pred_trajs):
+        valid_mask = processed_data['agent']['valid_mask'].detach().cpu().numpy()
+        curr_valid_mask = valid_mask[:, time]
+        pred_trajs = pred_trajs[time-60]
+        for idx, pred_traj in enumerate(pred_trajs):
+            if idx == 0: continue
+            if curr_valid_mask[idx] == False: continue
+            pred_traj = pred_traj.reshape(6, 50, 2)
+            for i in range(pred_traj.shape[0]):
+                #color = 'royalblue'#'orange'
+                color = "#3C736D"
+                ax.plot(
+                    pred_traj[i, :, 0], pred_traj[i, :, 1], zs=0, zdir='z', 
+                    color=color,
+                    linestyle='dashed',
+                    linewidth=0.5,
+                    alpha=1,
+                    zorder=1000
+                )
+                dx = pred_traj[i, -1, 0] - pred_traj[i, -2, 0]
+                dy = pred_traj[i, -1, 1] - pred_traj[i, -2, 1]
+                ax.arrow3D(
+                    pred_traj[i, -1, 0], pred_traj[i, -1, 1], 0,
+                    dx, dy, 0,
+                    mutation_scale=5,
+                    linewidth=0.65,
+                    fc=color,
+                    ec=color,
+                    label='TempEns-LearnAgg Pred Trajs',
+                    zorder=1000
+                )
 
     def matplot_traj(self, 
-            ax, time, processed_data,): 
-        #bsf_pred_trajs, bsw_pred_trajs, 
-        #tela_pred_trajs, gt_traj): 
+            ax, time, processed_data, tela_pred_trajs): 
         self.plot_history(ax, time, processed_data)
         #self.plot_bsw_prediction(ax, bsw_pred_trajs)
         #self.plot_bsf_prediction(ax, bsf_pred_trajs)
-        #self.plot_tela_prediction(ax, tela_pred_trajs)
-        #self.plot_gt(ax, gt_traj)
+        if time >= 60:
+            self.plot_tela_prediction(ax, time, processed_data, tela_pred_trajs)
 
     def matplot_legend(self, ax):
         handles, labels = plt.gca().get_legend_handles_labels()
@@ -522,29 +534,27 @@ class ITRIVisualizeWrapper3D:
 
     def forward(self, viz_dict=None) -> None:
         # 1. fetch data from dict
+        scene_len = viz_dict['scene_len']
         processed_data = viz_dict['processed_data']
-        #bsf_pred_trajs = viz_dict['baseline_sf_pred_trajs']
-        #bsw_pred_trajs = viz_dict['baseline_sw_pred_trajs']
-        #tela_pred_trajs = viz_dict['tela_pred_trajs']
-        #gt_traj = viz_dict['gt_traj']
+        sf_tela_trajs = viz_dict['sf_tela_trajs']
         
         # 2. preprocess visuzlize ingridient
-        for time in range(51, 71, 2): #51, 201, 2
+        for time in tqdm(range(50+10, scene_len, 2), desc='Rendering'): #51, 201, 2
             assert time >= 50
             fig, ax = self.create_fig_and_ax(
                     size_pixels=2000, processed_data=processed_data, time=time)
             map_data = self.preprocess_map()
             agent_data = self.preprocess_agent(time)
+            #av_data = next(d for d in agent_data if d['is_av'])
+            #pc_data = self.preprocess_pc(time, av_data['position'], av_data['rotation'])
 
             # 3. plot scenario with prediction
+            #self.matplot_pc(ax, pc_data)
             self.matplot_map(ax, map_data)
             self.matplot_agent(ax, agent_data)
             self.matplot_traj(
-                    ax, time, processed_data,) 
-            #        bsf_pred_trajs, 
-            #        bsw_pred_trajs, 
-            #        tela_pred_trajs, 
-            #        gt_traj)
+                    ax, time, processed_data,
+                    sf_tela_trajs,) 
             self.matplot_legend(ax)
             
             # 4. save it to file 
