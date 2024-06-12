@@ -34,16 +34,11 @@ from av2.datasets.motion_forecasting.eval.metrics import compute_ade, compute_fd
 plt.switch_backend('agg')
 
 _SIZE = {
-    "vehicle": [4.0, 2.0, 1.8],
+    "car": [4.0, 2.0, 1.8],
     "pedestrian": [0.7, 0.7, 1.7],
-    "motorcyclist": [2.0, 0.7, 1.6],
-    "cyclist": [2.0, 0.7, 1.6],
+    "bimo": [2.0, 0.7, 1.6],
     "bus": [7.0, 3.0, 3.8],
-    "static": [0.0, 0.0, 0.0],
-    "background": [0.0, 0.0, 0.0],
-    "construction": [0.0, 0.0, 0.0],
-    "riderless_bicycle": [2.0, 0.7, 0.6],
-    "unknown": [0.0, 0.0, 0.0],
+    "truck": [7.0, 3.0, 3.8],
 }
 
 def calculate_metrics(temp_sliced, gt_sliced):
@@ -109,6 +104,7 @@ class ITRIVisualizeWrapper3D:
             'lane_polygons': lane_polygons, 
             'crosswalk_polygons': crosswalk_polygons 
         }
+
     def split_lane_array(self, lane_array):
         return [lane_array[i:i + 10] for i in range(0, len(lane_array), 10)]
 
@@ -219,7 +215,7 @@ class ITRIVisualizeWrapper3D:
                 alpha=0.3,
             )
 
-    def create_fig_and_ax(self, size_pixels):
+    def create_fig_and_ax(self, size_pixels, processed_data, time):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         
@@ -237,7 +233,12 @@ class ITRIVisualizeWrapper3D:
         ax.set_yticks([])
         ax.set_yticklabels([])
 
-        canva_center = [-6358, 3026]
+        title = 'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo'
+        ax.set_title(title, fontsize=7, color="black")
+        
+        av_index = processed_data['agent']['av_index']
+        av_center = processed_data['agent']['position'][av_index, time]
+        canva_center = [av_center[0], av_center[1]]
         ax.set_xlim(canva_center[0]-20, canva_center[0]+20)
         ax.set_ylim(canva_center[1]-20, canva_center[1]+20)
         ax.set_axis_off()
@@ -245,45 +246,51 @@ class ITRIVisualizeWrapper3D:
         ax.view_init(elev=30, azim=-60)
         
         return fig, ax
+    
+    def quaternion_to_yaw(self, quaternion):
+        w = torch.tensor(quaternion['w'])
+        x = torch.tensor(quaternion['x'])
+        y = torch.tensor(quaternion['y'])
+        z = torch.tensor(quaternion['z'])
+        # Convert quaternion to yaw (heading)
+        yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        return yaw
 
-    def preprocess_agent(self, dataset, processed_data, time):
-        raw_file_name = processed_data['scenario_id'][0]
-        scenario_path = os.path.join(dataset.raw_dir, raw_file_name, f'scenario_{raw_file_name}.parquet')
-        scenario = scenario_serialization.load_argoverse_scenario_parquet(
-            scenario_path)
-        tracks_df = scenario_serialization._convert_tracks_to_tabular_format(
-            scenario.tracks)
-        target_df = tracks_df[tracks_df['object_category'] == 3]
-        target_id = target_df['track_id'].to_numpy()[0]
+    def preprocess_agent(self, time):
+        with open('./raw_data/2020-09-11-17-31-33_6/tracking/2020-09-11-17-31-33_6_ImmResult.json', 'r') as f:
+            json_data = json.load(f)
+
         agent_tracks = []
-        for track in scenario.tracks:
-            actor_timestep = torch.IntTensor(
-                [s.timestep for s in track.object_states])
-            observed = torch.Tensor([s.observed for s in track.object_states])
-
-            if (50-1 + time) not in actor_timestep:
-                continue
-            actor_state = torch.Tensor(
-                [list(object_state.position+(object_state.heading, ))
-                 for object_state in track.object_states if object_state.timestep == 50-1+time]
-            )
-
-            if (track.track_id == target_id):
-                target = True
-            else:
-                target = False
-            if not track.object_type in ['vehicle', 'pedestrian', 'motorcyclist', 'bus', 'cyclist']:
-                continue
-            state = {
-                "l": _SIZE[track.object_type][0],
-                "w": _SIZE[track.object_type][1],
-                "h": _SIZE[track.object_type][2],
-                "actor_state": actor_state,
-                "object_type": track.object_type,
-                "target": target
-            }
-            agent_tracks.append(state)
-        return agent_tracks, raw_file_name
+        for frame_idx, ts in enumerate(json_data['frames']):
+            if frame_idx == time:
+                frame_data = json_data['frames'][ts]
+                rotation = frame_data['pose']['rotation']
+                heading = self.quaternion_to_yaw(rotation)
+                actor_state = torch.tensor([frame_data['pose']['position']['x'], frame_data['pose']['position']['y'], heading])
+                state = {
+                    "l": _SIZE['car'][0],
+                    "w": _SIZE['car'][1],
+                    "h": _SIZE['car'][2],
+                    "actor_state": actor_state,
+                    "object_type": 'car',
+                    "is_av": True,
+                }
+                agent_tracks.append(state)
+                for obj_idx, obj_data in enumerate(frame_data['objects']):
+                    rotation = obj_data['rotation']
+                    heading = self.quaternion_to_yaw(rotation)
+                    actor_state = torch.tensor([obj_data['translation']['x'], obj_data['translation']['y'], heading])
+                    state = {
+                        "l": _SIZE[obj_data['tracking_name']][0],
+                        "w": _SIZE[obj_data['tracking_name']][1],
+                        "h": _SIZE[obj_data['tracking_name']][2],
+                        "actor_state": actor_state,
+                        "object_type": obj_data['tracking_name'],
+                        "is_av": False,
+                    }
+                    agent_tracks.append(state)
+                break
+        return agent_tracks
 
     def matplot_agent(self, ax, agent_data):
         
@@ -291,10 +298,10 @@ class ITRIVisualizeWrapper3D:
             l = track['l']
             w = track['w']
             h = track['h'] / 30
-            x = track['actor_state'][0, 0]
-            y = track['actor_state'][0, 1]
-            theta = track['actor_state'][0, 2] * 180 / np.pi
-            target = track['target']
+            x = track['actor_state'][0]
+            y = track['actor_state'][1]
+            theta = track['actor_state'][2] * 180 / np.pi
+            is_av = track['is_av']
 
             # 3D Transformation
             ts = ax.transData
@@ -331,7 +338,7 @@ class ITRIVisualizeWrapper3D:
                      [rotated_vertices[j] for j in [2, 3, 7, 6]]]
 
             # Create a Poly3DCollection
-            if target: 
+            if is_av: 
                 edgecolor = "#A13033" # 'royalblue'
                 facecolor = "#ED8199"
             else:
@@ -343,15 +350,38 @@ class ITRIVisualizeWrapper3D:
     
     def plot_history(self, ax, time, processed_data):
         past_trajs = processed_data['agent']['position'].detach().cpu().numpy()
-        eval_mask = processed_data['agent']['category'] == 3
-        past_traj = past_trajs[eval_mask, :50+time, :2][0]
+        valid_mask = processed_data['agent']['valid_mask'].detach().cpu().numpy()
+        curr_valid_mask = valid_mask[:, time]
+        valid_mask = valid_mask[:, time-50:time]
+        past_trajs = past_trajs[:, time-50:time] 
         
-        color = 'red'
-        ax.plot(
-            past_traj[:, 0], past_traj[:, 1],
-            color=color,
-            linewidth=0.5,
-        )
+        av_index = processed_data['agent']['av_index']
+        av_curr_valid = curr_valid_mask[av_index]
+        if av_curr_valid:
+            av_valid = valid_mask[av_index]
+            av_traj = past_trajs[av_index, av_valid]
+            color = 'red'
+            ax.plot(
+                av_traj[:, 0], av_traj[:, 1],
+                color=color,
+                linewidth=0.5,
+                label="AV",
+            )
+        color = "#3C736D"
+        for idx in range(len(past_trajs)-1):
+            i = idx + 1
+            past_valid = valid_mask[i]
+            curr_valid = curr_valid_mask[i]
+            if curr_valid:
+                num_valid_per_agent = np.sum(past_valid)
+                if num_valid_per_agent < 40: continue
+                past_traj = past_trajs[i, past_valid]
+                ax.plot(
+                    past_traj[:, 0], past_traj[:, 1],
+                    color=color,
+                    linewidth=0.5,
+                    label="Tracker",
+                )
 
     def plot_bsf_prediction(self, ax, pred_traj):
         pred_traj = pred_traj.reshape(6, 50, 2)
@@ -451,14 +481,14 @@ class ITRIVisualizeWrapper3D:
         )
 
     def matplot_traj(self, 
-        ax, time, processed_data, 
-        bsf_pred_trajs, bsw_pred_trajs, 
-        tela_pred_trajs, gt_traj): 
+            ax, time, processed_data,): 
+        #bsf_pred_trajs, bsw_pred_trajs, 
+        #tela_pred_trajs, gt_traj): 
         self.plot_history(ax, time, processed_data)
-        self.plot_bsw_prediction(ax, bsw_pred_trajs)
-        self.plot_bsf_prediction(ax, bsf_pred_trajs)
-        self.plot_tela_prediction(ax, tela_pred_trajs)
-        self.plot_gt(ax, gt_traj)
+        #self.plot_bsw_prediction(ax, bsw_pred_trajs)
+        #self.plot_bsf_prediction(ax, bsf_pred_trajs)
+        #self.plot_tela_prediction(ax, tela_pred_trajs)
+        #self.plot_gt(ax, gt_traj)
 
     def matplot_legend(self, ax):
         handles, labels = plt.gca().get_legend_handles_labels()
@@ -472,34 +502,53 @@ class ITRIVisualizeWrapper3D:
         )
         legend.set_zorder(999)
 
+    def generate_animate(self, uuid):
+        import imageio
+        import glob
+        cache_images = sorted(glob.glob('./visualize_results/gif_cache/*.png'), key=lambda x: int(''.join(filter(str.isdigit, x))))
+
+        # Combine the frames into a GIF
+        frames = []
+        for img in cache_images:
+            frames.append(imageio.imread(img))
+        #imageio.mimsave(f'./visualize_results/{uuid}.gif', frames, format='GIF', fps=5, loop=1)
+        imageio.mimsave(f'./visualize_results/{uuid}.mkv', frames, format='FFMPEG', fps=5, codec='libx264')
+
+    def clear_cache(self):
+        folder = './visualize_results/gif_cache'
+        for filename in os.listdir(folder):
+            if filename.endswith('.png'):
+                os.remove(os.path.join(folder, filename))
+
     def forward(self, viz_dict=None) -> None:
         # 1. fetch data from dict
-        #processed_data = viz_dict['processed_data']
+        processed_data = viz_dict['processed_data']
         #bsf_pred_trajs = viz_dict['baseline_sf_pred_trajs']
         #bsw_pred_trajs = viz_dict['baseline_sw_pred_trajs']
         #tela_pred_trajs = viz_dict['tela_pred_trajs']
         #gt_traj = viz_dict['gt_traj']
-        #dataset = viz_dict['dataset']
         
         # 2. preprocess visuzlize ingridient
-        fig, ax = self.create_fig_and_ax(
-                size_pixels=2000)
-        map_data = self.preprocess_map()
-        #time = 11
-        #agent_data, scenario_id = self.preprocess_agent(dataset, processed_data, time)
+        for time in range(51, 71, 2): #51, 201, 2
+            assert time >= 50
+            fig, ax = self.create_fig_and_ax(
+                    size_pixels=2000, processed_data=processed_data, time=time)
+            map_data = self.preprocess_map()
+            agent_data = self.preprocess_agent(time)
 
-        # 3. plot scenario with prediction
-        self.matplot_map(ax, map_data)
-        #self.matplot_agent(ax, agent_data)
-        #self.matplot_traj(
-        #        ax, time, processed_data, 
-        #        bsf_pred_trajs, 
-        #        bsw_pred_trajs, 
-        #        tela_pred_trajs, 
-        #        gt_traj)
-        self.matplot_legend(ax)
-        
-        # 4. save it to file 
-        plt.savefig(f'./visualize_results/only_map.png', dpi=800)
-        plt.clf()
-        plt.close()
+            # 3. plot scenario with prediction
+            self.matplot_map(ax, map_data)
+            self.matplot_agent(ax, agent_data)
+            self.matplot_traj(
+                    ax, time, processed_data,) 
+            #        bsf_pred_trajs, 
+            #        bsw_pred_trajs, 
+            #        tela_pred_trajs, 
+            #        gt_traj)
+            self.matplot_legend(ax)
+            
+            # 4. save it to file 
+            plt.savefig(f'./visualize_results/gif_cache/{time}.png', dpi=800)
+            plt.clf()
+        self.generate_animate(uuid='itri')
+        self.clear_cache()

@@ -97,6 +97,15 @@ def calculate_metrics(temp_sliced, gt_sliced):
     miss_rate = 1 if min_fde > 2.0 else 0
     return min_fde, min_ade, miss_rate
 
+def quaternion_to_yaw(quaternion):
+    w = torch.tensor(quaternion['w'])
+    x = torch.tensor(quaternion['x'])
+    y = torch.tensor(quaternion['y'])
+    z = torch.tensor(quaternion['z'])
+    # Convert quaternion to yaw (heading)
+    yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return yaw
+
 def get_agent_features():
     _agent_types = {
         'car': 0,
@@ -109,20 +118,17 @@ def get_agent_features():
         json_data = json.load(f)
     
     num_steps = len(json_data['frames'])  # Assuming 'frames' contains the trajectory data
-    unique_tracking_ids = set()
-    for ts in json_data['frames']:
-        frame_data = json_data['frames'][ts]
-        for obj_data in frame_data['objects']:
-            unique_tracking_ids.add(obj_data['tracking_id'])
-
-    num_agents = len(unique_tracking_ids) + 1  # Including the AV 
-
+    unique_tracking_ids = {int(obj_data['tracking_id']) for ts in json_data['frames'] for obj_data in json_data['frames'][ts]['objects']}
+    max_tracking_id = max(unique_tracking_ids)
+    num_agents = max_tracking_id + 2  # Including the AV
+    
+    dim = 3
     agent_ids = [None] * num_agents
     agent_type = torch.zeros(num_agents, dtype=torch.uint8)
     agent_category = torch.zeros(num_agents, dtype=torch.uint8)
-    position = torch.zeros(num_agents, num_steps, 2, dtype=torch.float)
+    position = torch.zeros(num_agents, num_steps, dim, dtype=torch.float)
     heading = torch.zeros(num_agents, num_steps, dtype=torch.float)
-    velocity = torch.zeros(num_agents, num_steps, 2, dtype=torch.float)
+    velocity = torch.zeros(num_agents, num_steps, dim, dtype=torch.float)
     valid_mask = torch.zeros(num_agents, num_steps, dtype=torch.bool)
     current_valid_mask = torch.zeros(num_agents, dtype=torch.bool)
     predict_mask = torch.ones(num_agents, num_steps, dtype=torch.bool)
@@ -134,17 +140,21 @@ def get_agent_features():
 
     for frame_idx, ts in enumerate(json_data['frames']):
         frame_data = json_data['frames'][ts]
+        position[av_idx, frame_idx] = torch.tensor([frame_data['pose']['position']['x'], frame_data['pose']['position']['y'], frame_data['pose']['position']['z']])
+        rotation = frame_data['pose']['rotation']
+        heading[av_idx, frame_idx] = quaternion_to_yaw(rotation)
+        valid_mask[av_idx, frame_idx] = True 
         for obj_idx, obj_data in enumerate(frame_data['objects']):
-            agent_idx = obj_idx + 1  # Start from index 1, as index 0 is for the AV
-            agent_ids[agent_idx] = obj_data['tracking_id']
+            # Start from index 1, as index 0 is for the AV
+            agent_idx = int(obj_data['tracking_id']) + 1
+            agent_ids[agent_idx] = agent_idx
             agent_type[agent_idx] = _agent_types[obj_data['tracking_name']]
             # Assuming the category is not provided in the JSON, setting it to 0 (background)
             agent_category[agent_idx] = 0
-            position[agent_idx, frame_idx] = torch.tensor([obj_data['translation']['x'], obj_data['translation']['y']])
-            rotation_y = torch.tensor(obj_data['rotation']['y'], dtype=torch.float)
-            rotation_w = torch.tensor(obj_data['rotation']['w'], dtype=torch.float)
-            heading[agent_idx, frame_idx] = torch.atan2(rotation_y, rotation_w) * 2
-            velocity[agent_idx, frame_idx] = torch.tensor([obj_data['velocity']['x'], obj_data['velocity']['y']])
+            position[agent_idx, frame_idx] = torch.tensor([obj_data['translation']['x'], obj_data['translation']['y'],0])#, obj_data['translation']['z']])
+            rotation = obj_data['rotation']
+            heading[agent_idx, frame_idx] = quaternion_to_yaw(rotation)
+            velocity[agent_idx, frame_idx] = torch.tensor([obj_data['velocity']['x'], obj_data['velocity']['y'], 0])
             valid_mask[agent_idx, frame_idx] = True
 
     # Assuming predict mask should be False for all frames for AV
@@ -368,9 +378,11 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt_path', type=str, required=True)
     args = parser.parse_args()
     
-    preprocess_data = preprocess_data()
+    processed_data = preprocess_data()
     viz_wrapper = ITRIVisualizeWrapper3D()
-    viz_wrapper.forward()
+    viz_wrapper.forward({
+        'processed_data': processed_data,
+    })
     exit()
 
     model = {
