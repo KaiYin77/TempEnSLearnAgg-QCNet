@@ -509,8 +509,7 @@ class ITRIVisualizeWrapper3D:
 
     def forward(self, viz_dict=None) -> None:
         # 1. fetch data from dict
-        #scene_len = viz_dict['scene_len']
-        scene_len = 200 
+        scene_len = viz_dict['scene_len']
         plot_radius = 20
         map_radius = 100
         processed_data = viz_dict['processed_data']
