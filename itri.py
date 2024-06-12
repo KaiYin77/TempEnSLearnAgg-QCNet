@@ -365,13 +365,13 @@ if __name__ == '__main__':
         'TempEnsLearnAgg': TempEnsLearnAgg,
     }[args.model].load_from_checkpoint(checkpoint_path=args.ckpt_path, map_location='cpu')
     data = HeteroData(processed_data) 
-    #sf_tela_trajs_eval = np.load('sf_tela_trajs_eval.npy')
-    #viz_wrapper.forward({
-    #    'scene_len': scene_len,
-    #    'processed_data': data,
-    #    'sf_tela_trajs': sf_tela_trajs_eval,
-    #})
-    #exit()
+    sf_tela_trajs_eval = np.load('sf_tela_trajs_eval.npy')
+    viz_wrapper.forward({
+        'scene_len': scene_len,
+        'processed_data': data,
+        'sf_tela_trajs': sf_tela_trajs_eval,
+    })
+    exit()
 
     # accelerate by gpu
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -44,14 +44,6 @@ _SIZE = {
     "truck": [7.0, 3.0, 3.8],
 }
 
-def calculate_metrics(temp_sliced, gt_sliced):
-    fde_k = compute_fde(temp_sliced, gt_sliced)
-    ade_k = compute_ade(temp_sliced, gt_sliced)
-    min_fde = fde_k.min()
-    min_ade = ade_k.min()
-    miss_rate = 1 if min_fde > 2.0 else 0
-    return min_fde, min_ade, miss_rate
-
 class Arrow3D(FancyArrowPatch):
 
     def __init__(self, x, y, z, dx, dy, dz, *args, **kwargs):
@@ -92,6 +84,15 @@ class ITRIVisualizeWrapper3D:
         pcd_dir = './raw_data/2020-09-11-17-31-33_6/lidar'
         self.pcd_files = sorted([f for f in os.listdir(pcd_dir) if f.endswith('.pcd')])
         self.point_clouds = [o3d.io.read_point_cloud(os.path.join(pcd_dir, f)) for f in self.pcd_files]
+    
+    def is_within_limits(self, av_center, radius, points):
+        av_center = av_center.numpy()
+        x_min, x_max = av_center[0] - radius, av_center[0] + radius
+        y_min, y_max = av_center[1] - radius, av_center[1] + radius
+
+        """Check if any point is within the given limits."""
+        return np.any((points[:, 0] >= x_min) & (points[:, 0] <= x_max) &
+                      (points[:, 1] >= y_min) & (points[:, 1] <= y_max))
 
     def get_map_features(self, map_api, centerlines):
         lane_segment_ids = map_api.get_scenario_lane_segment_ids()
@@ -114,6 +115,20 @@ class ITRIVisualizeWrapper3D:
     def split_lane_array(self, lane_array):
         return [lane_array[i:i + 10] for i in range(0, len(lane_array), 10)]
 
+    def compute_centerline_lengths(self, centerlines):
+        num_centerlines, num_points, _ = centerlines.shape
+        lengths = np.zeros(num_centerlines)
+        
+        for i in range(num_centerlines):
+            centerline = centerlines[i]
+            # Calculate the distances between consecutive points
+            distances = np.linalg.norm(centerline[1:] - centerline[:-1], axis=1)
+            # Sum the distances to get the total length of the centerline
+            lengths[i] = np.sum(distances)
+        
+        return lengths
+
+
     def preprocess_map(self):
         with open('./raw_data/hd_map/waypoints.json', 'r') as f:
             waypoints_raw_data = json.load(f)
@@ -121,7 +136,7 @@ class ITRIVisualizeWrapper3D:
         lane_centerlines = []
         for wp in waypoints:
             points = wp['points']
-            lane_array = np.array([[point['x'], point['y'], point['z']] for point in points])
+            lane_array = np.array([[point['x'], point['y'], 0] for point in points])
             if len(lane_array) > 10:
                 split_arrays = self.split_lane_array(lane_array)
                 for array in split_arrays:
@@ -137,7 +152,7 @@ class ITRIVisualizeWrapper3D:
             left_boundary_points = []
             right_boundary_points = []
             for point in points:
-                x, y, z, width, angle = point['x'], point['y'], point['z'], point['width'], point['angle']
+                x, y, z, width, angle = point['x'], point['y'], 0, point['width'], point['angle']
                 half_width = width / 2.0
                
                 # Calculate the offsets for the left and right boundaries
@@ -178,50 +193,56 @@ class ITRIVisualizeWrapper3D:
         crosswalk_polygons = []
         for pc in ped_cross:
             points = pc['points']
-            first_point = np.array([points[0]['x'], points[0]['y'], points[0]['z']])
-            cross_array = np.array([[point['x'], point['y'], point['z']] for point in points])
+            first_point = np.array([points[0]['x'], points[0]['y'], 0])
+            cross_array = np.array([[point['x'], point['y'], 0] for point in points])
             cross_array = np.vstack([cross_array, first_point])
             crosswalk_polygons.append(cross_array)
         crosswalk_polygons = np.array(crosswalk_polygons)
         
+        #centerline_lengths = self.compute_centerline_lengths(lane_centerlines)
+        #print(min(centerline_lengths), max(centerline_lengths))
         map_data = {
             'lane_centerlines': lane_centerlines,
             'lane_polygons': lane_polygons,
             'crosswalk_polygons': crosswalk_polygons,
         }
+
         return map_data
     
-    def matplot_map(self, ax, map_data):
+    def matplot_map(self, ax, av_center, radius, map_data):
         lane_centerlines = map_data['lane_centerlines']
         for i, l_c in enumerate(lane_centerlines):
-            ax.plot(
-                l_c[:, 0], l_c[:, 1], 
-                ':',
-                zs=0, zdir='z',
-                color='#0A1931',
-                linewidth=0.3,
-                alpha=1,
-                label='Map',
-            )
+            if self.is_within_limits(av_center, radius, l_c):
+                ax.plot(
+                    l_c[:, 0], l_c[:, 1], 
+                    ':',
+                    zs=0, zdir='z',
+                    color='#0A1931',
+                    linewidth=0.3,
+                    alpha=1,
+                    label='Map',
+                )
         lane_polygons = map_data['lane_polygons']
         for i, l_p in enumerate(lane_polygons):
-            ax.plot(
-                l_p[:, 0], l_p[:, 1], zs=0, zdir='z',
-                color='dimgray',
-                linewidth=0.5,
-                alpha=0.3,
-            )
+            if self.is_within_limits(av_center, radius, l_p):
+                ax.plot(
+                    l_p[:, 0], l_p[:, 1], zs=0, zdir='z',
+                    color='dimgray',
+                    linewidth=0.5,
+                    alpha=0.3,
+                )
 
         crosswalk_polygons = map_data['crosswalk_polygons']
         for c_p in crosswalk_polygons:
-            ax.plot(
-                c_p[:, 0], c_p[:, 1], zs=0, zdir='z',
-                color='dimgray',
-                linewidth=0.5,
-                alpha=0.3,
-            )
+            if self.is_within_limits(av_center, radius, c_p):
+                ax.plot(
+                    c_p[:, 0], c_p[:, 1], zs=0, zdir='z',
+                    color='dimgray',
+                    linewidth=0.5,
+                    alpha=0.3,
+                )
 
-    def create_fig_and_ax(self, size_pixels, processed_data, time):
+    def create_fig_and_ax(self, size_pixels, av_center, radius, time):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         
@@ -239,14 +260,12 @@ class ITRIVisualizeWrapper3D:
         ax.set_yticks([])
         ax.set_yticklabels([])
 
-        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @+t={time-60} (10hz)'
+        title = f'Hsinchu Guang Fu Road Seg6 - Motion Prediction Demo @+t={time-60} ms (10hz)'
         ax.set_title(title, fontsize=7, color="black")
         
-        av_index = processed_data['agent']['av_index']
-        av_center = processed_data['agent']['position'][av_index, time]
         canva_center = [av_center[0], av_center[1]]
-        ax.set_xlim(canva_center[0]-20, canva_center[0]+20)
-        ax.set_ylim(canva_center[1]-20, canva_center[1]+20)
+        ax.set_xlim(canva_center[0]-radius, canva_center[0]+radius)
+        ax.set_ylim(canva_center[1]-radius, canva_center[1]+radius)
         ax.set_axis_off()
         ax.grid(False)
         ax.view_init(elev=30, azim=-60)
@@ -407,7 +426,7 @@ class ITRIVisualizeWrapper3D:
             curr_valid = curr_valid_mask[i]
             if curr_valid:
                 num_valid_per_agent = np.sum(past_valid)
-                if num_valid_per_agent < 40: continue
+                if num_valid_per_agent < 45: continue
                 past_traj = past_trajs[i, past_valid]
                 ax.plot(
                     past_traj[:, 0], past_traj[:, 1],
@@ -416,52 +435,6 @@ class ITRIVisualizeWrapper3D:
                     label="Tracker",
                 )
 
-    def plot_bsf_prediction(self, ax, pred_traj):
-        pred_traj = pred_traj.reshape(6, 50, 2)
-        for i in range(pred_traj.shape[0]):
-            color = 'orange'
-            ax.plot(
-                pred_traj[i, :, 0], pred_traj[i, :, 1], zs=0, zdir='z',
-                color=color,
-                linestyle='dashed',
-                linewidth=0.5,
-                alpha=1,
-            )
-            dx = pred_traj[i, -1, 0] - pred_traj[i, -2, 0]
-            dy = pred_traj[i, -1, 1] - pred_traj[i, -2, 1]
-            ax.arrow3D(
-                pred_traj[i, -1, 0], pred_traj[i, -1, 1], 0,
-                dx, dy, 0,
-                mutation_scale=5,
-                linewidth=0.5,
-                fc=color,
-                ec=color,
-                label='Baseline trajs'
-            )
-
-    def plot_bsw_prediction(self, ax, pred_traj):
-        pred_traj = pred_traj.reshape(-1, 50, 2)
-        for i in range(pred_traj.shape[0]):
-            color = 'dimgrey'
-            ax.plot(
-                pred_traj[i, :, 0], pred_traj[i, :, 1], zs=0.2, zdir='z',
-                color=color,
-                linestyle='dashed',
-                linewidth=0.15,
-                alpha=1,
-            )
-            dx = pred_traj[i, -1, 0] - pred_traj[i, -2, 0]
-            dy = pred_traj[i, -1, 1] - pred_traj[i, -2, 1]
-            ax.arrow3D(
-                pred_traj[i, -1, 0], pred_traj[i, -1, 1], 0.2,
-                dx, dy, 0,
-                mutation_scale=3,
-                linewidth=0.15,
-                fc=color,
-                ec=color,
-                label='K-sweep=10 trajs'
-            )
-
     def plot_tela_prediction(self, ax, time, processed_data, pred_trajs):
         valid_mask = processed_data['agent']['valid_mask'].detach().cpu().numpy()
         curr_valid_mask = valid_mask[:, time]
@@ -469,6 +442,10 @@ class ITRIVisualizeWrapper3D:
         for idx, pred_traj in enumerate(pred_trajs):
             if idx == 0: continue
             if curr_valid_mask[idx] == False: continue
+            
+            past_valid = valid_mask[idx]
+            num_valid_per_agent = np.sum(past_valid)
+            if num_valid_per_agent < 45: continue
             pred_traj = pred_traj.reshape(6, 50, 2)
             for i in range(pred_traj.shape[0]):
                 #color = 'royalblue'#'orange'
@@ -497,8 +474,6 @@ class ITRIVisualizeWrapper3D:
     def matplot_traj(self, 
             ax, time, processed_data, tela_pred_trajs): 
         self.plot_history(ax, time, processed_data)
-        #self.plot_bsw_prediction(ax, bsw_pred_trajs)
-        #self.plot_bsf_prediction(ax, bsf_pred_trajs)
         if time >= 60:
             self.plot_tela_prediction(ax, time, processed_data, tela_pred_trajs)
 
@@ -524,7 +499,7 @@ class ITRIVisualizeWrapper3D:
         for img in cache_images:
             frames.append(imageio.imread(img))
         #imageio.mimsave(f'./visualize_results/{uuid}.gif', frames, format='GIF', fps=5, loop=1)
-        imageio.mimsave(f'./visualize_results/{uuid}.mkv', frames, format='FFMPEG', fps=5, codec='libx264')
+        imageio.mimsave(f'./visualize_results/{uuid}.mkv', frames, format='FFMPEG', fps=10, codec='libx264')
 
     def clear_cache(self):
         folder = './visualize_results/gif_cache'
@@ -532,25 +507,31 @@ class ITRIVisualizeWrapper3D:
             if filename.endswith('.png'):
                 os.remove(os.path.join(folder, filename))
 
+
     def forward(self, viz_dict=None) -> None:
         # 1. fetch data from dict
-        scene_len = viz_dict['scene_len']
+        #scene_len = viz_dict['scene_len']
+        scene_len = 200 
+        plot_radius = 20
+        map_radius = 100
         processed_data = viz_dict['processed_data']
         sf_tela_trajs = viz_dict['sf_tela_trajs']
         
+        map_data = self.preprocess_map()
         # 2. preprocess visuzlize ingridient
-        for time in tqdm(range(50+10, scene_len, 2), desc='Rendering'): #51, 201, 2
+        for time in tqdm(range(50+10, scene_len, 1), desc='Rendering'): #50+10, 201, 1
             assert time >= 50
+            av_index = processed_data['agent']['av_index']
+            av_center = processed_data['agent']['position'][av_index, time]
             fig, ax = self.create_fig_and_ax(
-                    size_pixels=2000, processed_data=processed_data, time=time)
-            map_data = self.preprocess_map()
+                    size_pixels=2000, av_center=av_center, radius=plot_radius, time=time)
             agent_data = self.preprocess_agent(time)
             #av_data = next(d for d in agent_data if d['is_av'])
             #pc_data = self.preprocess_pc(time, av_data['position'], av_data['rotation'])
 
             # 3. plot scenario with prediction
             #self.matplot_pc(ax, pc_data)
-            self.matplot_map(ax, map_data)
+            self.matplot_map(ax, av_center, map_radius, map_data)
             self.matplot_agent(ax, agent_data)
             self.matplot_traj(
                     ax, time, processed_data,
@@ -560,5 +541,6 @@ class ITRIVisualizeWrapper3D:
             # 4. save it to file 
             plt.savefig(f'./visualize_results/gif_cache/{time}.png', dpi=800)
             plt.clf()
+            plt.close(fig)
         self.generate_animate(uuid='itri')
         self.clear_cache()
