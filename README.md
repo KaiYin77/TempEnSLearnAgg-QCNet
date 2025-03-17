@@ -22,7 +22,7 @@ Alternatively, you can configure the environment in your favorite way. Installin
 **Step 3**: install the [Argoverse 2 API](https://github.com/argoverse/av2-api) and download the [Argoverse 2 Motion Forecasting Dataset](https://www.argoverse.org/av2.html) following the [Argoverse 2 User Guide](https://argoverse.github.io/user-guide/getting_started.html).
 
 ## Prerequisite
-**Step 1**: download the pretrained base model weights and structure files as shown below : [Download Link]((https://drive.google.com/drive/folders/17ksxYqP1HRV_mIUrKLb-wSljavdUmiz_?usp=drive_link))
+**Step 1**: download the pretrained base model weights and structure files as shown below : [Download Link](https://drive.google.com/drive/folders/1CctnRBY4z1ijzZBaGzuqgNBWdJe9EPTj?usp=sharing)
 
 ```
 .
