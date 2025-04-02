@@ -23,7 +23,7 @@ class TempEnsLearnAgg(pl.LightningModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
        
-        self.base_model = QCNetSliding.load_from_checkpoint('./pretrain/QCNet_AV2.ckpt')
+        self.base_model = QCNetSliding.load_from_checkpoint('./pretrain/QCNet_AV2.ckpt', map_location=torch.device('cpu'))
 
         self.save_hyperparameters()
         self.dataset = self.base_model.dataset

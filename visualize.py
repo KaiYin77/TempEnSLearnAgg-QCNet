@@ -114,7 +114,7 @@ if __name__ == '__main__':
     }[args.model].load_from_checkpoint(checkpoint_path=args.ckpt_path, map_location='cpu')
     val_dataset = {
         'argoverse_v2': ArgoverseV2Dataset,
-    }[model.dataset](root=args.root, split='val',
+    }[model.dataset](root=args.root, split='viz_reflect',
                      transform=TargetBuilder(model.num_historical_steps, model.num_future_steps))
     dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers,
                             pin_memory=args.pin_memory, persistent_workers=args.persistent_workers)

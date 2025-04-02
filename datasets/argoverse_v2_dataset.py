@@ -84,7 +84,7 @@ class ArgoverseV2Dataset(Dataset):
         root = os.path.expanduser(os.path.normpath(root))
         if not os.path.isdir(root):
             os.makedirs(root)
-        if split not in ('train', 'val', 'test', 'mini', 'densest', 'paper', 'video', 'thesis', 'slide-1', 'slide-2', 'ped', 'motor', 'tiny'):
+        if split not in ('train', 'val', 'test', 'mini', 'densest', 'paper', 'video', 'thesis', 'slide-1', 'slide-2', 'ped', 'motor', 'tiny', 'viz_reflect'):
             raise ValueError(f'{split} is not a valid split')
         self.split = split
 
@@ -145,6 +145,7 @@ class ArgoverseV2Dataset(Dataset):
             'motor': 8,
             'ped': 6,
             'tiny': 2,
+            'viz_reflect': 30,
         }[split]
         self._agent_types = ['vehicle', 'pedestrian', 'motorcyclist', 'cyclist', 'bus', 'static', 'background',
                              'construction', 'riderless_bicycle', 'unknown']
@@ -527,7 +528,7 @@ class ArgoverseV2Dataset(Dataset):
                 (os.path.isdir(self.processed_dir) and len(self.processed_file_names) == len(self))):
             return
         self._processed_file_names = []
-        self.download()
+        # self.download()
 
     def _process(self) -> None:
         # if complete processed files exist, skip processing

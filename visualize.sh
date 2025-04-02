@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=1 \
-python visualize.py --model TempEnsLearnAgg --root /media/ee904/ssd/argoverse_v2_qcnet/ --ckpt_path ./pretrain/TempEnsLearnAgg_AV2.ckpt
+CUDA_VISIBLE_DEVICES=0 \
+python visualize.py --model TempEnsLearnAgg --root /home/kaiyin-upbeat/dataset/argoverse_2/ --ckpt_path ./pretrain/TempEnsLearnAgg_AV2.ckpt
